@@ -77,7 +77,7 @@ monoRight = pipeline.create(dai.node.MonoCamera)
 depth_cam = pipeline.create(dai.node.StereoDepth)
 depth_cam_xlink = pipeline.create(dai.node.XLinkOut)
 
-depth_cam_xlink.setStreamName("disp_stream")
+depth_cam_xlink.setStreamName("depth_stream")
 
 # Properties
 monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
@@ -100,7 +100,7 @@ monoLeft.out.link(depth_cam.left)
 monoRight.out.link(depth_cam.right)
 # TODO make below disparity into depth and remove depth calc from loop further down.
 # TURD MONKEY
-depth_cam.disparity.link(depth_cam_xlink.input)
+depth_cam.depth.link(depth_cam_xlink.input)
 
 
 # ros startup
@@ -149,7 +149,7 @@ with dai.Device(pipeline) as device:
 
     # Output queue will be used to get the rgb frames from the output defined above
     q_nav_stream = device.getOutputQueue(name="nav_stream", maxSize=1, blocking=False)
-    q_depth_stream = device.getOutputQueue(name="disp_stream", maxSize=1, blocking=False)
+    q_depth_stream = device.getOutputQueue(name="depth_stream", maxSize=1, blocking=False)
     q_inspection_stream = device.getOutputQueue(name="inspection_stream", maxSize=1, blocking=True)
     q_inspection_control = device.getInputQueue(name="inspection_control")
 
@@ -167,10 +167,7 @@ with dai.Device(pipeline) as device:
         inD = q_depth_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
         if inD is not None:
             depframe = array(inD.getCvFrame())
-            # frame = cv2.imdecode(inRgb.getData(), cv2.IMREAD_UNCHANGED)
-            #depth = 441.25 * 7.5 / 50 = 66.19
-            depframe[depframe==0] = 1   # far far away, like 30 meters
-            depframe = array(flpx * bld / depframe, dtype=np.uint16)
+            #TODO: if depth values for "invalid" pixels are not large numbers then repalce them with large numbers
             # cv2.imshow("depth_stream", depframe)
 
         if q_inspection_stream.has():

@@ -158,6 +158,11 @@ with dai.Device(pipeline) as device:
     insframe = None
 
     while True:
+        # set everything back to None to avoid lingering images
+        rgbframe = None
+        depframe = None
+        insframe = None
+        
         inRgb = q_nav_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
         if inRgb is not None:
             rgbframe = inRgb.getCvFrame()
@@ -221,8 +226,6 @@ with dai.Device(pipeline) as device:
         rgb_info_pub.publish(rgb_info_data)
         dep_info_data.header.stamp = dep_data.header.stamp
         dep_info_pub.publish(rgb_info_data)
-
-
 
         rate.sleep()
 

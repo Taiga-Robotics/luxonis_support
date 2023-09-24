@@ -98,8 +98,6 @@ depth_cam.setDepthAlign(dai.CameraBoardSocket.RGB)
 # Linking
 monoLeft.out.link(depth_cam.left)
 monoRight.out.link(depth_cam.right)
-# TODO make below disparity into depth and remove depth calc from loop further down.
-# TURD MONKEY
 depth_cam.depth.link(depth_cam_xlink.input)
 
 

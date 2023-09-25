@@ -26,6 +26,8 @@ def inspection_capture_callback(req: TriggerRequest):
     return res
 
 def populate_caminfo_from_dai_intrinsics(width:int, height:int, intrinsics: List[List[float]]) -> CameraInfo:
+    # https://docs.luxonis.com/projects/api/en/latest/references/python/#depthai.CalibrationHandler.getCameraIntrinsics
+    # http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html
     info_data = CameraInfo()
     info_data.height = int(height)
     info_data.width = int(width)
@@ -48,16 +50,20 @@ def adjust_intrinsics(sensor_res:Tuple[int, int], initial_crop:Tuple[int, int], 
     x is width, y is height. 
     """
     intrinsics = deepcopy(intrinsics)
-    # adjust centre of image due to initial crop
+    # adjust optical centre due to initial crop
+
+    # print(intrinsics)   # debugging
+
     if initial_crop:
         # TODO review this for off by one errors.
         xoff = (sensor_res[0] - initial_crop[0])/2
         yoff = (sensor_res[1] - initial_crop[1])/2
         intrinsics[0][2]-= xoff
         intrinsics[1][2]-= yoff
-
         #update sensor res for subsequent math
         sensor_res=initial_crop
+
+    # print(intrinsics)   # debugging
 
     # scale centre and f
     if output_resolution:
@@ -80,7 +86,12 @@ def adjust_intrinsics(sensor_res:Tuple[int, int], initial_crop:Tuple[int, int], 
         intrinsics[0][2]*=scalex
         intrinsics[1][1]*=scaley
         intrinsics[1][2]*=scaley
+
+        # TODO review this for off by one errors.
         intrinsics[cropaxis][2]-=cropoffset
+    
+    # print(intrinsics)   # debugging
+    # print("===================")
 
     return intrinsics
 
@@ -98,7 +109,7 @@ inspection_cam = pipeline.create(dai.node.ColorCamera)
 inspection_cam.setBoardSocket(dai.CameraBoardSocket.RGB)
 inspection_cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_4_K) # full res THE_12_MP 4056*3040, THE_4K is 3840*2160 
 
-#isp processing is camera level, ruins the full res.
+# isp processing is camera level, ruins the full res.
 # inspection still encoder
 # https://docs.luxonis.com/projects/api/en/latest/components/nodes/video_encoder/
 videoEnc = pipeline.create(dai.node.VideoEncoder)
@@ -120,26 +131,16 @@ inspection_cam.setPreviewSize(640,480)
 inspection_cam.setPreviewKeepAspectRatio(True)
 nav_cam_xlink = pipeline.create(dai.node.XLinkOut)
 nav_cam_xlink.setStreamName("nav_stream")
-# inspection_cam.setVideoSize does a centre crop on the stream, doesnt resize.
-# cannot mjpeg the preview stream booo
-# inspection_cam.video.link(videoEnc2.input)
-# videoEnc2 = pipeline.create(dai.node.VideoEncoder)
-# videoEnc2.setDefaultProfilePreset(1, dai.VideoEncoderProperties.Profile.MJPEG)
-# videoEnc2.bitstream.link(nav_cam_xlink.input) # linked off the inspection cam, without processing
 inspection_cam.preview.link(nav_cam_xlink.input)
 
 ## stereodepth
-# lasers set beloow after device has been linked.
-extended_disparity = True # Closer-in minimum depth, disparity range is doubled (from 95 to 190):
-subpixel = False # Better accuracy for longer distance, fractional disparity 32-levels:
-lr_check = True # Better handling for occlusions:
+# lasers set below after device has been linked.
 
 # Define sources and outputs
 monoLeft = pipeline.create(dai.node.MonoCamera)
 monoRight = pipeline.create(dai.node.MonoCamera)
 depth_cam = pipeline.create(dai.node.StereoDepth)
 depth_cam_xlink = pipeline.create(dai.node.XLinkOut)
-
 depth_cam_xlink.setStreamName("depth_stream")
 
 # Properties
@@ -148,13 +149,13 @@ monoLeft.setCamera("left")
 monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoRight.setCamera("right")
 
-# Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
+# Create a node that will produce the depth map
 depth_cam.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 depth_cam.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
-depth_cam.setLeftRightCheck(lr_check)
-depth_cam.setExtendedDisparity(extended_disparity)
-depth_cam.setSubpixel(subpixel)
+depth_cam.setLeftRightCheck(True)       # Better handling for occlusions:
+depth_cam.setExtendedDisparity(True)    # Closer-in minimum depth, disparity range is doubled (from 95 to 190):
+depth_cam.setSubpixel(False)            # Better accuracy for longer distance, fractional disparity 32-levels:
 depth_cam.setOutputSize(640, 480)
 depth_cam.setDepthAlign(dai.CameraBoardSocket.RGB)
 
@@ -191,18 +192,14 @@ with dai.Device(pipeline) as device:
     device.setIrLaserDotProjectorBrightness(1000)
     device.setLogOutputLevel(dai.LogLevel.TRACE)
     # get calibration info
-    # https://docs.luxonis.com/projects/api/en/latest/references/python/#depthai.CalibrationHandler.getCameraIntrinsics
-    # http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html
     calibData = device.readCalibration()
-    # (4056,3040) - (3840,2160) = (216,880)
-    # tl = dai.Point2f(108, 440)
-    # br = dai.Point2f(4056-108, 3040-440)
     intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB)
-    rgbd_intrinsics = adjust_intrinsics((4056,3040), (3840,2160), (640,480), intrinsics)
+    # rgbd_intrinsics = adjust_intrinsics((4056,3040), (3840,2160), (640,480), intrinsics)
+    rgbd_intrinsics = adjust_intrinsics((3840,2160),None, (640,480), intrinsics)
     rgb_info_data = populate_caminfo_from_dai_intrinsics(640,480, rgbd_intrinsics)
-    inspection_intrinsics = adjust_intrinsics((4056,3040), (3840,2160), None, intrinsics)
+    inspection_intrinsics = adjust_intrinsics((3840,2160),None, None, intrinsics)
     ins_info_data = populate_caminfo_from_dai_intrinsics(3840,2160, inspection_intrinsics)
-    
+
 
     # Output queue will be used to get the rgb frames from the output defined above
     q_nav_stream = device.getOutputQueue(name="nav_stream", maxSize=1, blocking=False)
@@ -223,28 +220,18 @@ with dai.Device(pipeline) as device:
         inRgb = q_nav_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
         if inRgb is not None:
             rgbframe = inRgb.getCvFrame()
-            # frame = cv2.imdecode(inRgb.getData(), cv2.IMREAD_UNCHANGED)
-            # cv2.imshow("nav_stream", rgbframe)
 
         inD = q_depth_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
         if inD is not None:
             depframe = array(inD.getCvFrame())
-            #TODO: if depth values for "invalid" pixels are not large numbers then repalce them with large numbers
-            # cv2.imshow("depth_stream", depframe)
+            #TODO: if depth values for "invalid" pixels are not large numbers then replace them with large numbers
 
         if q_inspection_stream.has():
             insframe = cv2.imdecode(q_inspection_stream.get().getData(), cv2.IMREAD_UNCHANGED)
-            # _ = q_inspection_stream.get().getData()
-            # insframe = cv2.pyrDown(insframe)
-            # insframe = cv2.pyrDown(insframe)
-            # cv2.imshow("highres_snap", insframe)
 
             rospy.loginfo(f"{time.time()} got an inspection frame ")
 
-        # key = cv2.waitKey(1)
-        # if key == ord('q'):
-        #     break
-        # elif key == ord('c'):
+
         if inspection_trigger:
             inspection_trigger = False
             ctrl = dai.CameraControl()

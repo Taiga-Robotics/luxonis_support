@@ -7,12 +7,13 @@ import depthai as dai
 import numpy as np
 from numpy import array
 from math import pi, tan
+from copy import deepcopy
 
 import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CameraInfo
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
-from typing import List
+from typing import List, Tuple
 
 #globals, because im lazy today
 inspection_trigger=False
@@ -35,6 +36,53 @@ def populate_caminfo_from_dai_intrinsics(width:int, height:int, intrinsics: List
     info_data.P = [k[0],k[1],k[2],0, k[3],k[4],k[5], 0, k[6],k[7],k[8],0] 
 
     return(info_data)
+
+def adjust_intrinsics(sensor_res:Tuple[int, int], initial_crop:Tuple[int, int], output_resolution:Tuple[int, int], 
+                      intrinsics: List[List[float]], keepAspectRatio:bool = True) -> List[List[float]]:
+    """
+    sensor_res: resolution of sensor for which the intrinsics will be supplied
+    initial_crop: cropping of sensor res before scaling
+    output resolution: scaling of sensor and initial crop
+    intrinsics: 3x3 [[f_x, 0, c_x],[0, f_y, c_y], [0,0,1]]
+    keepaspectratio: if true then the smallest scaling factor will be applied from (width, height) and the other axis is assumed to be scaled and cropped to output resolution
+    x is width, y is height. 
+    """
+    intrinsics = deepcopy(intrinsics)
+    # adjust centre of image due to initial crop
+    if initial_crop:
+        # TODO review this for off by one errors.
+        xoff = (sensor_res[0] - initial_crop[0])/2
+        yoff = (sensor_res[1] - initial_crop[1])/2
+        intrinsics[0][2]-= xoff
+        intrinsics[1][2]-= yoff
+
+        #update sensor res for subsequent math
+        sensor_res=initial_crop
+
+    # scale centre and f
+    if output_resolution:
+        scalex = output_resolution[0]/sensor_res[0]
+        scaley = output_resolution[1]/sensor_res[1]
+        cropaxis=0
+        cropoffset=0.0
+        if keepAspectRatio:
+            if scalex >= scaley:
+                scaley=scalex
+                cropaxis = 1
+            if scaley > scalex:
+                scalex=scaley
+                cropaxis = 0
+            
+            # calculate adjustment to c_(x||y) to be applied after scaling
+            cropoffset = (sensor_res[cropaxis]*scalex - output_resolution[cropaxis])/2.0
+
+        intrinsics[0][0]*=scalex
+        intrinsics[0][2]*=scalex
+        intrinsics[1][1]*=scaley
+        intrinsics[1][2]*=scaley
+        intrinsics[cropaxis][2]-=cropoffset
+
+    return intrinsics
 
 
 # depthai link: link the output of the parent to the input of the argument : link_output(thing.input)
@@ -149,9 +197,10 @@ with dai.Device(pipeline) as device:
     # (4056,3040) - (3840,2160) = (216,880)
     # tl = dai.Point2f(108, 440)
     # br = dai.Point2f(4056-108, 3040-440)
-    rgbd_intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB, resizeWidth=853, resizeHeight=480, keepAspectRatio=True)
+    intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB)
+    rgbd_intrinsics = adjust_intrinsics((4056,3040), (3840,2160), (640,480), intrinsics)
     rgb_info_data = populate_caminfo_from_dai_intrinsics(640,480, rgbd_intrinsics)
-    inspection_intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB)
+    inspection_intrinsics = adjust_intrinsics((4056,3040), (3840,2160), None, intrinsics)
     ins_info_data = populate_caminfo_from_dai_intrinsics(3840,2160, inspection_intrinsics)
     
 

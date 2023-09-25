@@ -12,6 +12,7 @@ import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CameraInfo
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
+from typing import List
 
 #globals, because im lazy today
 inspection_trigger=False
@@ -22,6 +23,19 @@ def inspection_capture_callback(req: TriggerRequest):
     inspection_trigger = True
     res.success = True
     return res
+
+def populate_caminfo_from_dai_intrinsics(width:int, height:int, intrinsics: List[List[float]]) -> CameraInfo:
+    info_data = CameraInfo()
+    info_data.height = int(height)
+    info_data.width = int(width)
+    info_data.K = array(intrinsics).flatten()
+    info_data.D = [0.0, 0.0, 0.0, 0.0, 0.0]
+    info_data.R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    k=info_data.K
+    info_data.P = [k[0],k[1],k[2],0, k[3],k[4],k[5], 0, k[6],k[7],k[8],0] 
+
+    return(info_data)
+
 
 # depthai link: link the output of the parent to the input of the argument : link_output(thing.input)
 # https://docs.luxonis.com/projects/api/en/latest/components/nodes/color_camera/
@@ -34,7 +48,8 @@ pipeline = dai.Pipeline()
 #### inspection cam config
 inspection_cam = pipeline.create(dai.node.ColorCamera)
 inspection_cam.setBoardSocket(dai.CameraBoardSocket.RGB)
-inspection_cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_4_K) # full res THE_12_MP 4056*3040, THE_4K is 3840*2160
+inspection_cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_4_K) # full res THE_12_MP 4056*3040, THE_4K is 3840*2160 
+
 #isp processing is camera level, ruins the full res.
 # inspection still encoder
 # https://docs.luxonis.com/projects/api/en/latest/components/nodes/video_encoder/
@@ -102,7 +117,7 @@ depth_cam.depth.link(depth_cam_xlink.input)
 
 
 # ros startup
-rospy.init_node("camera")
+rospy.init_node("camera", disable_signals=False)
 rgb_pub = rospy.Publisher("~color/image_raw", Image, queue_size=1)
 rgb_data = Image()
 rgb_info_pub = rospy.Publisher("~color/camera_info", CameraInfo, queue_size=1)
@@ -120,30 +135,25 @@ ins_trigger_srv = rospy.Service("~inspection/capture", Trigger, inspection_captu
 bridge = CvBridge()
 
 rate = rospy.Rate(30)
-
+rospy.core._in_shutdown
+rospy.core._shutdown_flag
 
 # Connect to device and start pipeline
 with dai.Device(pipeline) as device:
     device.setIrLaserDotProjectorBrightness(1000)
     device.setLogOutputLevel(dai.LogLevel.TRACE)
     # get calibration info
+    # https://docs.luxonis.com/projects/api/en/latest/references/python/#depthai.CalibrationHandler.getCameraIntrinsics
+    # http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html
     calibData = device.readCalibration()
-    rgbd_intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB, resizeWidth=640, resizeHeight=480)
-    rgb_info_data.height = 480
-    rgb_info_data.width = 640
-    rgb_info_data.K = array(rgbd_intrinsics).flatten()
-    rgb_info_data.D = [0.0, 0.0, 0.0, 0.0, 0.0]
-    rgb_info_data.R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    k=rgb_info_data.K
-    rgb_info_data.P = [k[0],k[1],k[2],0, k[3],k[4],k[5], 0, k[6],k[7],k[8],0] 
+    # (4056,3040) - (3840,2160) = (216,880)
+    # tl = dai.Point2f(108, 440)
+    # br = dai.Point2f(4056-108, 3040-440)
+    rgbd_intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB, resizeWidth=853, resizeHeight=480, keepAspectRatio=True)
+    rgb_info_data = populate_caminfo_from_dai_intrinsics(640,480, rgbd_intrinsics)
     inspection_intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB)
-    ins_info_data.K = array(inspection_intrinsics).flatten()
-    # distortion = calibData.getDistortionCoefficients(dai.CameraBoardSocket.RGB)
-    # focal_length_in_pixels = image_width_in_pixels * 0.5 / tan(HFOV * 0.5 * PI/180)
-    HFOV = calibData.getFov(dai.CameraBoardSocket.LEFT)
-    bld = calibData.getBaselineDistance(dai.CameraBoardSocket.LEFT, dai.CameraBoardSocket.RIGHT) * 10 #mm, ros expects depth images in mm
-    flpx = 640*0.5/tan(HFOV * 0.5 * pi/180)
-
+    ins_info_data = populate_caminfo_from_dai_intrinsics(3840,2160, inspection_intrinsics)
+    
 
     # Output queue will be used to get the rgb frames from the output defined above
     q_nav_stream = device.getOutputQueue(name="nav_stream", maxSize=1, blocking=False)
@@ -155,7 +165,7 @@ with dai.Device(pipeline) as device:
     depframe = None
     insframe = None
 
-    while True:
+    while not (rospy.is_shutdown() or rospy.core.is_shutdown_requested()): #rospy.core._shutdown_flag:
         # set everything back to None to avoid lingering images
         rgbframe = None
         depframe = None
@@ -199,14 +209,20 @@ with dai.Device(pipeline) as device:
             #TODO frame and proper time in header.
             rgb_data.header.frame_id = "camera_color_optical_frame"
             rgb_data.header.stamp = rospy.Time.now()
+            rgb_info_data.header.stamp = rgb_data.header.stamp
             rgb_pub.publish(rgb_data)
+            rgb_info_pub.publish(rgb_info_data)
+
 
         if depframe is not None:
             dep_data = bridge.cv2_to_imgmsg(depframe, "passthrough")
             #TODO frame and proper time in header.
             dep_data.header.frame_id = "camera_color_optical_frame"
             dep_data.header.stamp = rospy.Time.now()
+            dep_info_data.header.stamp = dep_data.header.stamp
             dep_pub.publish(dep_data)
+            dep_info_pub.publish(rgb_info_data)
+
 
 
         if insframe is not None:
@@ -214,13 +230,10 @@ with dai.Device(pipeline) as device:
             #TODO frame and proper time in header.
             ins_data.header.frame_id = "camera_color_optical_frame"
             ins_data.header.stamp = rospy.Time.now()
+            ins_info_data.header.stamp = ins_data.header.stamp
             ins_pub.publish(ins_data)
+            ins_info_pub.publish(ins_info_data)
 
-
-        rgb_info_data.header.stamp = rgb_data.header.stamp
-        rgb_info_pub.publish(rgb_info_data)
-        dep_info_data.header.stamp = dep_data.header.stamp
-        dep_info_pub.publish(rgb_info_data)
 
         rate.sleep()
 

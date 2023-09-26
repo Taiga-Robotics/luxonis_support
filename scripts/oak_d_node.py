@@ -150,6 +150,8 @@ monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoRight.setCamera("right")
 
 # Create a node that will produce the depth map
+# https://docs.luxonis.com/projects/api/en/latest/components/nodes/stereo_depth/
+# https://docs.luxonis.com/projects/api/en/latest/components/messages/stereo_depth_config/
 depth_cam.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 depth_cam.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
@@ -158,6 +160,7 @@ depth_cam.setExtendedDisparity(True)    # Closer-in minimum depth, disparity ran
 depth_cam.setSubpixel(False)            # Better accuracy for longer distance, fractional disparity 32-levels:
 depth_cam.setOutputSize(640, 480)
 depth_cam.setDepthAlign(dai.CameraBoardSocket.RGB)
+
 
 # Linking
 monoLeft.out.link(depth_cam.left)

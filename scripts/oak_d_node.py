@@ -13,15 +13,63 @@ import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CameraInfo
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
+
+from iris_support_msgs.srv import IrisBasicService, IrisBasicServiceRequest, IrisBasicServiceResponse
+
 from typing import List, Tuple
 
 #globals, because im lazy today
 inspection_trigger=False
+insp_lensPos = 145 # good for card inspection approx 20cm from card
+inspection_focus_time = -1
+focus_state = "nav"
+do_set_focus = False
 
 def inspection_capture_callback(req: TriggerRequest):
     global inspection_trigger
     res = TriggerResponse()
     inspection_trigger = True
+    res.success = True
+    return res
+
+def inspection_focus_callback(req: TriggerRequest):
+    global focus_state, do_set_focus, insp_lensPos
+    res = TriggerResponse()
+    if focus_state != "inspection":
+        focus_state = "inspection"
+        do_set_focus = True
+    res.message = f"setting focus state to inspection. corresponding lens position [0-255] is: {insp_lensPos}"
+    rospy.loginfo(f"{time.time()} {res.message}")
+    res.success = True
+    return res
+
+def nav_focus_callback(req:TriggerRequest):
+    global focus_state, do_set_focus
+    res = TriggerResponse()
+    if focus_state != "nav":
+        focus_state = "nav"
+        do_set_focus = True
+    res.message = f"setting focus state to nav" # TODO. corresponding lens position [0-255] is: {nav_lensPos}"
+    rospy.loginfo(f"{time.time()} {res.message}")
+    res.success = True
+    return res
+
+def set_insp_lens_pos_callback(req:IrisBasicServiceRequest):
+    global insp_lensPos, do_set_focus
+    res = IrisBasicServiceResponse()
+    new_lens_pos = req.val_int
+    if new_lens_pos < 0 or new_lens_pos > 255:
+        res.message = "invalid setting for lens position. acceptable values are [0-255]"
+        rospy.logwarn(f"{time.time()} {res.message}")
+        res.success = False
+        return res
+    
+    insp_lensPos = new_lens_pos
+    # set focus again if we're already in inspection mode
+    if focus_state == "inspection":
+        do_set_focus = True
+    res.message = f"inspection lens position updated to {new_lens_pos} and will be applied when a request to set the focus state to inspection"
+    rospy.loginfo(f"{time.time()} {res.message}")
     res.success = True
     return res
 
@@ -180,6 +228,9 @@ ins_data = Image()
 ins_info_pub = rospy.Publisher("~inspection/camera_info", CameraInfo, queue_size=1)
 ins_info_data = CameraInfo()
 ins_trigger_srv = rospy.Service("~inspection/capture", Trigger, inspection_capture_callback)
+ins_focus_srv = rospy.Service("~inspection/focus", Trigger, inspection_focus_callback)
+ins_lens_pos_set_srv = rospy.Service("~inspection/set_inspection_lens_position", IrisBasicService, set_insp_lens_pos_callback)
+nav_focus_srv = rospy.Service("~color/focus", Trigger, nav_focus_callback)
 
 bridge = CvBridge()
 
@@ -207,6 +258,12 @@ with dai.Device(pipeline) as device:
     q_inspection_stream = device.getOutputQueue(name="inspection_stream", maxSize=1, blocking=True)
     q_inspection_control = device.getInputQueue(name="inspection_control")
 
+    nav_lensPos = calibData.getLensPosition(dai.CameraBoardSocket.RGB)
+
+    ctrl = dai.CameraControl()
+    ctrl.setManualFocus(nav_lensPos)
+    q_inspection_control.send(ctrl)
+    
     rgbframe = None
     depframe = None
     insframe = None
@@ -232,13 +289,24 @@ with dai.Device(pipeline) as device:
             rospy.loginfo(f"{time.time()} got an inspection frame ")
 
 
-        if inspection_trigger:
+        # Focus
+        if do_set_focus:
+            ctrl = dai.CameraControl()
+            if focus_state == "nav":
+                ctrl.setManualFocus(nav_lensPos)
+            if focus_state == "inspection":
+                ctrl.setManualFocus(insp_lensPos)
+                inspection_focus_time = time.time()
+            q_inspection_control.send(ctrl)
+            
+            do_set_focus = False
+
+        if (inspection_trigger) and (focus_state == "inspection") and (time.time() - inspection_focus_time > 0.4) :
             inspection_trigger = False
             ctrl = dai.CameraControl()
             ctrl.setCaptureStill(True)
             q_inspection_control.send(ctrl)
             rospy.loginfo(f"{time.time()} Sent 'still' event to the camera!")
-
 
         if rgbframe is not None:
             rgb_data = bridge.cv2_to_imgmsg(rgbframe, "bgr8")

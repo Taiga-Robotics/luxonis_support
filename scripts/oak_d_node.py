@@ -20,7 +20,7 @@ from typing import List, Tuple
 
 #globals, because im lazy today
 inspection_trigger=False
-insp_lensPos = 145 # good for card inspection approx 20cm from card
+insp_lensPos = 141 # good for card inspection approx 20cm from card
 inspection_focus_time = -1
 focus_state = "nav"
 do_set_focus = False

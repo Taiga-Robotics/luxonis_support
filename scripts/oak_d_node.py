@@ -14,7 +14,7 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CameraInfo
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
 
-from iris_support_msgs.srv import IrisBasicService, IrisBasicServiceRequest, IrisBasicServiceResponse
+from luxonis_support.srv import SetUint8, SetUint8Request, SetUint8Response
 
 from typing import List, Tuple
 
@@ -54,9 +54,9 @@ def nav_focus_callback(req:TriggerRequest):
     res.success = True
     return res
 
-def set_insp_lens_pos_callback(req:IrisBasicServiceRequest):
+def set_insp_lens_pos_callback(req:SetUint8Request):
     global insp_lensPos, do_set_focus
-    res = IrisBasicServiceResponse()
+    res = SetUint8Response()
     new_lens_pos = req.val_int
     if new_lens_pos < 0 or new_lens_pos > 255:
         res.message = "invalid setting for lens position. acceptable values are [0-255]"
@@ -232,7 +232,7 @@ ins_info_pub = rospy.Publisher("~inspection/camera_info", CameraInfo, queue_size
 ins_info_data = CameraInfo()
 ins_trigger_srv = rospy.Service("~inspection/capture", Trigger, inspection_capture_callback)
 ins_focus_srv = rospy.Service("~inspection/focus", Trigger, inspection_focus_callback)
-ins_lens_pos_set_srv = rospy.Service("~inspection/set_inspection_lens_position", IrisBasicService, set_insp_lens_pos_callback)
+ins_lens_pos_set_srv = rospy.Service("~inspection/set_inspection_lens_position", SetUint8, set_insp_lens_pos_callback)
 nav_focus_srv = rospy.Service("~color/focus", Trigger, nav_focus_callback)
 
 bridge = CvBridge()

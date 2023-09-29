@@ -1,0 +1,11 @@
+# SetUint8Request
+# standard header
+Header header
+
+# a lowly, but mighty uint8
+uint8 val_int
+
+---
+#SetUint8Response
+bool success
+string message

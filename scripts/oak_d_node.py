@@ -24,6 +24,12 @@ insp_lensPos = 150 # good for card inspection approx 20cm from card
 inspection_focus_time = -1
 focus_state = "nav"
 do_set_focus = False
+mono_iso = 100
+new_mono_iso = None
+mono_exposure = 2000
+new_mono_exposure = None
+mono_laser_power = 100
+new_mono_laser_power = None
 
 def inspection_capture_callback(req: TriggerRequest):
     global inspection_trigger
@@ -72,6 +78,31 @@ def set_insp_lens_pos_callback(req:SetUint8Request):
     rospy.loginfo(f"{time.time()} {res.message}")
     res.success = True
     return res
+
+def set_mono_iso(req:SetUint8Request):
+    global new_mono_iso    
+    res = SetUint8Response()
+
+    new_mono_iso = req.val_int*10
+    res.success = True
+    return res
+
+def set_mono_exposure(req:SetUint8Request):
+    global new_mono_exposure    
+    res = SetUint8Response()
+
+    new_mono_exposure = req.val_int*10
+    res.success = True
+    return res
+
+def set_mono_laser(req:SetUint8Request):
+    global new_mono_laser_power    
+    res = SetUint8Response()
+
+    new_mono_laser_power = req.val_int*10
+    res.success = True
+    return res
+
 
 def populate_caminfo_from_dai_intrinsics(width:int, height:int, intrinsics: List[List[float]]) -> CameraInfo:
     # https://docs.luxonis.com/projects/api/en/latest/references/python/#depthai.CalibrationHandler.getCameraIntrinsics
@@ -191,11 +222,29 @@ depth_cam = pipeline.create(dai.node.StereoDepth)
 depth_cam_xlink = pipeline.create(dai.node.XLinkOut)
 depth_cam_xlink.setStreamName("depth_stream")
 
+"""
+monoLeft_cam_xlink = pipeline.create(dai.node.XLinkOut)
+monoLeft_cam_xlink.setStreamName("monoLeft_stream")
+monoLeft.out.link(monoLeft_cam_xlink.input)
+monoRight_cam_xlink = pipeline.create(dai.node.XLinkOut)
+monoRight_cam_xlink.setStreamName("monoRight_stream")
+monoRight.out.link(monoRight_cam_xlink.input)
+"""
+
 # Properties
 monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoLeft.setCamera("left")
 monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoRight.setCamera("right")
+
+############ SETTING ONE OF THE MONO CAMS CONTROL SETTINGS APPLIES IT TO BOTH ############
+# monoLeft_cam_ctrl_xlink = pipeline.create(dai.node.XLinkIn)
+# monoLeft_cam_ctrl_xlink.setStreamName("monoLeft_control")
+# monoLeft_cam_ctrl_xlink.out.link(monoLeft.inputControl)
+
+monoRight_cam_ctrl_xlink = pipeline.create(dai.node.XLinkIn)
+monoRight_cam_ctrl_xlink.setStreamName("monoRight_control")
+monoRight_cam_ctrl_xlink.out.link(monoRight.inputControl)
 
 # Create a node that will produce the depth map
 # https://docs.luxonis.com/projects/api/en/latest/components/nodes/stereo_depth/
@@ -235,6 +284,10 @@ ins_focus_srv = rospy.Service("~inspection/focus", Trigger, inspection_focus_cal
 ins_lens_pos_set_srv = rospy.Service("~inspection/set_inspection_lens_position", SetUint8, set_insp_lens_pos_callback)
 nav_focus_srv = rospy.Service("~color/focus", Trigger, nav_focus_callback)
 
+mono_exposure_srv = rospy.Service("~mono/set_exposure", SetUint8, set_mono_exposure)
+mono_iso_srv = rospy.Service("~mono/set_iso", SetUint8, set_mono_iso)
+mono_laser_srv = rospy.Service("~mono/set_laser", SetUint8, set_mono_laser)
+
 bridge = CvBridge()
 
 rate = rospy.Rate(30)
@@ -243,7 +296,7 @@ rospy.core._shutdown_flag
 
 # Connect to device and start pipeline
 with dai.Device(pipeline) as device:
-    device.setIrLaserDotProjectorBrightness(1000)
+    device.setIrLaserDotProjectorBrightness(mono_laser_power)
     device.setLogOutputLevel(dai.LogLevel.TRACE)
     # get calibration info
     calibData = device.readCalibration()
@@ -258,6 +311,13 @@ with dai.Device(pipeline) as device:
     # Output queue will be used to get the rgb frames from the output defined above
     q_nav_stream = device.getOutputQueue(name="nav_stream", maxSize=1, blocking=False)
     q_depth_stream = device.getOutputQueue(name="depth_stream", maxSize=1, blocking=False)
+    # monoLeft_stream = device.getOutputQueue(name="monoLeft_stream", maxSize=1, blocking=False)
+    # monoRight_stream = device.getOutputQueue(name="monoRight_stream", maxSize=1, blocking=False)
+    
+    ################### YOU ONLY NEED ONE MONO CONTROL INTERFACE ###################
+    # monoLeft_control = device.getInputQueue(name="monoLeft_control")
+    monoRight_control = device.getInputQueue(name="monoRight_control")
+    
     q_inspection_stream = device.getOutputQueue(name="inspection_stream", maxSize=1, blocking=True)
     q_inspection_control = device.getInputQueue(name="inspection_control")
 
@@ -267,10 +327,13 @@ with dai.Device(pipeline) as device:
     ctrl.setManualFocus(nav_lensPos)
     q_inspection_control.send(ctrl)
     
+    ctrl2 = dai.CameraControl()
+    ctrl2.setManualExposure(mono_exposure, mono_iso)
+    monoRight_control.send(ctrl2)
+
     rgbframe = None
     depframe = None
     insframe = None
-
     while not (rospy.is_shutdown() or rospy.core.is_shutdown_requested()): #rospy.core._shutdown_flag:
         # set everything back to None to avoid lingering images
         rgbframe = None
@@ -291,6 +354,24 @@ with dai.Device(pipeline) as device:
 
             rospy.loginfo(f"{time.time()} got an inspection frame ")
 
+        # MONO params
+        if (new_mono_exposure is not None) and (new_mono_exposure!=mono_exposure):
+            mono_exposure = new_mono_exposure
+            new_mono_exposure = None
+            ctrl2.setManualExposure(mono_exposure, mono_iso)
+            monoRight_control.send(ctrl2)
+
+        if (new_mono_iso is not None) and (new_mono_iso!=mono_iso):
+            mono_iso = new_mono_iso
+            new_mono_iso = None
+            ctrl2.setManualExposure(mono_exposure, mono_iso)
+            monoRight_control.send(ctrl2)
+
+        # LASER
+        if (new_mono_laser_power is not None) and (new_mono_laser_power!=mono_laser_power):
+            mono_laser_power = new_mono_laser_power
+            new_mono_laser_power = None
+            device.setIrLaserDotProjectorBrightness(mono_laser_power)
 
         # Focus
         if do_set_focus:

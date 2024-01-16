@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+
+     <!-- sample handeye calibration -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="camera_link_broadcaster"
+      args="0 0 0   0 0 0 world camera_color_optical_frame" />
+
+    <node name="camera" pkg="luxonis_support" type="oak_d_node.py" output="screen" required="true"
+    launch-prefix="bash -c 'source $HOME/.iris/iris-env/bin/activate &amp;&amp; $0 $@'"/>
+
+</launch>

@@ -39,13 +39,13 @@
 
 
   rgb_i_interleaved: false
-  rgb_i_fps: 10.0
+  rgb_i_fps: 30.0
   rgb_i_low_bandwidth: false
   rgb_i_low_bandwidth_quality: 10
   rgb_i_max_q_size: 1
   rgb_i_publish_topic: true
   # 5312X6000, 48_MP, 4000x3000, 5MP, 1200, 800, 13MP, 12MP, 4K, 1080, 1440X1080, 720
-  rgb_i_resolution: '1080'
+  rgb_i_resolution: '1080P'
   rgb_i_output_isp: true
 
   rgb_i_set_isp_scale: false
@@ -70,7 +70,7 @@
 
   left_i_width: 1280
   left_i_height: 800
-  left_i_resolution: '800'
+  left_i_resolution: '720P'
 
   left_i_low_bandwidth: false
   left_i_low_bandwidth_quality: 50
@@ -94,7 +94,7 @@
   
   right_i_width: 1280
   right_i_height: 800
-  right_i_resolution: '800'
+  right_i_resolution: '720P'
   
   right_i_low_bandwidth: false
   right_i_low_bandwidth_quality: 50

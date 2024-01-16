@@ -222,14 +222,13 @@ depth_cam = pipeline.create(dai.node.StereoDepth)
 depth_cam_xlink = pipeline.create(dai.node.XLinkOut)
 depth_cam_xlink.setStreamName("depth_stream")
 
-"""
+
 monoLeft_cam_xlink = pipeline.create(dai.node.XLinkOut)
 monoLeft_cam_xlink.setStreamName("monoLeft_stream")
 monoLeft.out.link(monoLeft_cam_xlink.input)
 monoRight_cam_xlink = pipeline.create(dai.node.XLinkOut)
 monoRight_cam_xlink.setStreamName("monoRight_stream")
 monoRight.out.link(monoRight_cam_xlink.input)
-"""
 
 # Properties
 monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
@@ -279,6 +278,12 @@ ins_pub = rospy.Publisher("~inspection/image_raw", Image, queue_size=1)
 ins_data = Image()
 ins_info_pub = rospy.Publisher("~inspection/camera_info", CameraInfo, queue_size=1)
 ins_info_data = CameraInfo()
+monol_pub = rospy.Publisher("~mono/left", Image, queue_size=1)
+monol_data = Image()
+monor_pub = rospy.Publisher("~mono/right", Image, queue_size=1)
+monor_data = Image()
+
+
 ins_trigger_srv = rospy.Service("~inspection/capture", Trigger, inspection_capture_callback)
 ins_focus_srv = rospy.Service("~inspection/focus", Trigger, inspection_focus_callback)
 ins_lens_pos_set_srv = rospy.Service("~inspection/set_inspection_lens_position", SetUint8, set_insp_lens_pos_callback)
@@ -311,8 +316,8 @@ with dai.Device(pipeline) as device:
     # Output queue will be used to get the rgb frames from the output defined above
     q_nav_stream = device.getOutputQueue(name="nav_stream", maxSize=1, blocking=False)
     q_depth_stream = device.getOutputQueue(name="depth_stream", maxSize=1, blocking=False)
-    # monoLeft_stream = device.getOutputQueue(name="monoLeft_stream", maxSize=1, blocking=False)
-    # monoRight_stream = device.getOutputQueue(name="monoRight_stream", maxSize=1, blocking=False)
+    monoLeft_stream = device.getOutputQueue(name="monoLeft_stream", maxSize=1, blocking=False)
+    monoRight_stream = device.getOutputQueue(name="monoRight_stream", maxSize=1, blocking=False)
     
     ################### YOU ONLY NEED ONE MONO CONTROL INTERFACE ###################
     # monoLeft_control = device.getInputQueue(name="monoLeft_control")
@@ -339,6 +344,8 @@ with dai.Device(pipeline) as device:
         rgbframe = None
         depframe = None
         insframe = None
+        monolframe = None
+        monorframe = None
         
         inRgb = q_nav_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
         if inRgb is not None:
@@ -353,6 +360,14 @@ with dai.Device(pipeline) as device:
             insframe = cv2.imdecode(q_inspection_stream.get().getData(), cv2.IMREAD_UNCHANGED)
 
             rospy.loginfo(f"{time.time()} got an inspection frame ")
+
+        inmonol = monoLeft_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
+        if inmonol is not None:
+            monolframe = inmonol.getCvFrame()
+        inmonor = monoRight_stream.tryGet()  # Non-blocking call, will return a new data that has arrived or None otherwise
+        if inmonor is not None:
+            monorframe = inmonor.getCvFrame()
+
 
         # MONO params
         if (new_mono_exposure is not None) and (new_mono_exposure!=mono_exposure):
@@ -421,6 +436,25 @@ with dai.Device(pipeline) as device:
             ins_info_data.header.stamp = ins_data.header.stamp
             ins_pub.publish(ins_data)
             ins_info_pub.publish(ins_info_data)
+
+        if monolframe is not None:
+            monol_data = bridge.cv2_to_imgmsg(monolframe, "passthrough")
+            #TODO frame and proper time in header.
+            monol_data.header.frame_id = "camera_color_optical_frame"
+            monol_data.header.stamp = rospy.Time.now()
+            # dep_info_data.header.stamp = monol_data.header.stamp
+            monol_pub.publish(monol_data)
+            # dep_info_pub.publish(rgb_info_data)
+
+        if monorframe is not None:
+            monor_data = bridge.cv2_to_imgmsg(monorframe, "passthrough")
+            #TODO frame and proper time in header.
+            monor_data.header.frame_id = "camera_color_optical_frame"
+            monor_data.header.stamp = rospy.Time.now()
+            # dep_info_data.header.stamp = monor_data.header.stamp
+            monor_pub.publish(monor_data)
+            # dep_info_pub.publish(rgb_info_data)
+
 
 
         rate.sleep()

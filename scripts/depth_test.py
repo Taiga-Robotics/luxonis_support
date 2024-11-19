@@ -15,7 +15,7 @@ from sensor_msgs.msg import Image, CameraInfo
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
 from typing import List, Tuple
 from iris_ml_ros.utilities import CameraParameters
-from iris_ml_ros.interfaces import CameraInterfaceRGBD
+from iris_ml_ros.interfaces.camera import CameraInterfaceRGBD
 from iris_ml_ros.interfaces import tf_interfaces
 from iris_ml_ros.utilities import pointcloud
 
